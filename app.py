@@ -52,11 +52,20 @@ def consensus_vs_median_chart(t, c, m, lo, hi) -> go.Figure:
     return fig
 
 
-def network_frame_figure(frame: dict) -> go.Figure:
+def fixed_layout(frames: list[dict]) -> dict:
+    """One layout for the union of every node/edge that ever appears, so a surviving
+    agent keeps the same position across frames instead of jumping on every join/leave."""
+    g = nx.Graph()
+    for fr in frames:
+        g.add_nodes_from(fr["nodes"])
+        g.add_edges_from(fr["edges"])
+    return nx.spring_layout(g, seed=42)
+
+
+def network_frame_figure(frame: dict, pos: dict) -> go.Figure:
     g = nx.Graph()
     g.add_nodes_from(frame["nodes"])
     g.add_edges_from(frame["edges"])
-    pos = nx.spring_layout(g, seed=42)
 
     edge_x, edge_y = [], []
     for u, v in g.edges():
@@ -95,10 +104,11 @@ def network_explorer(frames: list[dict], key: str) -> None:
         st.session_state[idx_key] = min(len(frames) - 1, st.session_state[idx_key] + 1)
     c2.slider("step", 0, len(frames) - 1, key=idx_key)
 
+    pos = fixed_layout(frames)
     frame = frames[st.session_state[idx_key]]
     left, right = st.columns([2, 1])
     with left:
-        st.plotly_chart(network_frame_figure(frame), use_container_width=True)
+        st.plotly_chart(network_frame_figure(frame, pos), use_container_width=True)
     with right:
         st.metric("t", f"{frame['t']:.4g} s")
         st.metric("mean(x)  (≈ consensus)", f"{frame['c']:.4g}")
