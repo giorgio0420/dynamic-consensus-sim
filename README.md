@@ -68,7 +68,7 @@ Laplacian.
 
 **Protocol (eq. 5).**
 
-$$\dot x_i = -\lambda \sum_{j\in N_i(t)} \text{sign}(x_i - x_j) \;-\; \alpha\, \text{sign}(x_i - u_i)$$
+$$\dot x_i = -\lambda \sum_{j\in N_i(t)} \text{sign}(x_i - x_j) - \alpha\ \text{sign}(x_i - u_i)$$
 
 with `sign(0)=0` for the ODE, and the set-valued `SIGN(0)=[-1,1]` for the Filippov analysis
 below. In matrix form (`E` incidence matrix, `L=EEᵀ`): linear consensus is `ẋ=-Lx`, this
