@@ -31,6 +31,13 @@ Two settings are implemented:
   joining agent starts at the mean of its neighbours (eq. 6). Consensus error stays
   bounded by `B` instead of vanishing, provided `B ≤ (α/n_max − Π)·Δτ`.
 
+![network evolution demo](assets/demo.gif)
+
+Open network with 6→18 agents joining/leaving over 1.5 s. Node color is fixed per agent id
+(identity), node size tracks the agent's current state `x_i` — both are frozen to a single
+layout computed once over every agent that ever appears, so a surviving agent never jumps
+position or color, only size. Regenerate with `python scripts/make_demo_gif.py`.
+
 ## Run
 
 ```bash

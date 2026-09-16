@@ -4,6 +4,7 @@ import streamlit as st
 
 from dynamic_consensus.dynamics import closed_gain_report, open_gain_report
 from dynamic_consensus.simulate import simulate_closed, simulate_open
+from dynamic_consensus.viz import fixed_colors, fixed_layout, value_range
 
 st.set_page_config(page_title="Dynamic Median Consensus", layout="wide")
 st.title("Dynamic Consensus on the Median Value — simulator")
@@ -52,17 +53,7 @@ def consensus_vs_median_chart(t, c, m, lo, hi) -> go.Figure:
     return fig
 
 
-def fixed_layout(frames: list[dict]) -> dict:
-    """One layout for the union of every node/edge that ever appears, so a surviving
-    agent keeps the same position across frames instead of jumping on every join/leave."""
-    g = nx.Graph()
-    for fr in frames:
-        g.add_nodes_from(fr["nodes"])
-        g.add_edges_from(fr["edges"])
-    return nx.spring_layout(g, seed=42)
-
-
-def network_frame_figure(frame: dict, pos: dict) -> go.Figure:
+def network_frame_figure(frame: dict, pos: dict, colors: dict, vrange: tuple[float, float]) -> go.Figure:
     g = nx.Graph()
     g.add_nodes_from(frame["nodes"])
     g.add_edges_from(frame["edges"])
@@ -74,16 +65,17 @@ def network_frame_figure(frame: dict, pos: dict) -> go.Figure:
     edge_trace = go.Scatter(x=edge_x, y=edge_y, mode="lines",
                              line=dict(color="rgba(150,150,150,0.6)", width=1), hoverinfo="skip")
 
+    vmin, vmax = vrange
     node_x = [pos[i][0] for i in g.nodes()]
     node_y = [pos[i][1] for i in g.nodes()]
-    node_val = [frame["x"][i] for i in g.nodes()]
+    node_colors = [colors[i] for i in g.nodes()]
+    node_sizes = [16 + 28 * (frame["x"][i] - vmin) / (vmax - vmin + 1e-9) for i in g.nodes()]
     node_text = [f"agent {i}<br>x={frame['x'][i]:.3f}" for i in g.nodes()]
     node_trace = go.Scatter(
         x=node_x, y=node_y, mode="markers+text",
         text=[str(i) for i in g.nodes()], textposition="top center",
         hovertext=node_text, hoverinfo="text",
-        marker=dict(size=22, color=node_val, colorscale="RdYlBu_r", showscale=True,
-                    colorbar=dict(title="x_i"), line=dict(width=1, color="black")),
+        marker=dict(size=node_sizes, color=node_colors, line=dict(width=1, color="black")),
     )
     fig = go.Figure([edge_trace, node_trace])
     fig.update_layout(showlegend=False, height=420, margin=dict(l=10, r=10, t=10, b=10),
@@ -93,6 +85,7 @@ def network_frame_figure(frame: dict, pos: dict) -> go.Figure:
 
 def network_explorer(frames: list[dict], key: str) -> None:
     st.subheader("Network step explorer")
+    st.caption("Color = fixed per agent id (identity). Size = current state x_i (bigger = larger value).")
     idx_key = f"{key}_frame_idx"
     if idx_key not in st.session_state:
         st.session_state[idx_key] = 0
@@ -105,10 +98,12 @@ def network_explorer(frames: list[dict], key: str) -> None:
     c2.slider("step", 0, len(frames) - 1, key=idx_key)
 
     pos = fixed_layout(frames)
+    colors = fixed_colors(frames)
+    vrange = value_range(frames)
     frame = frames[st.session_state[idx_key]]
     left, right = st.columns([2, 1])
     with left:
-        st.plotly_chart(network_frame_figure(frame, pos), use_container_width=True)
+        st.plotly_chart(network_frame_figure(frame, pos, colors, vrange), use_container_width=True)
     with right:
         st.metric("t", f"{frame['t']:.4g} s")
         st.metric("mean(x)  (≈ consensus)", f"{frame['c']:.4g}")

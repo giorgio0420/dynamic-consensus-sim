@@ -2,3 +2,4 @@ numpy
 networkx
 streamlit
 plotly
+matplotlib   # only for scripts/make_demo_gif.py
