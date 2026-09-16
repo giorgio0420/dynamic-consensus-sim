@@ -15,11 +15,13 @@ def simulate_closed(
     dt: float = 1e-4,
     p_edge: float = 0.5,
     seed: int = 0,
+    n_frames: int = 120,
 ) -> dict:
     """Fixed graph, Theorem 4.1/4.2 setting. References u_i(t) = a_i*sin(2*pi*f_i*t)."""
     rng = np.random.default_rng(seed)
     g = random_connected_graph(n, p_edge, rng)
     nodes = list(g.nodes())
+    edges = list(g.edges())
     adj = nx.to_numpy_array(g, nodelist=nodes)
 
     x = rng.uniform(0, 2, n)
@@ -28,20 +30,33 @@ def simulate_closed(
     pi_bound = float(np.max(a * 2 * np.pi * f))
 
     steps = int(t_end / dt)
+    stride = max(1, steps // n_frames)
     ts = np.empty(steps)
     xs = np.empty((steps, n))
     us = np.empty((steps, n))
     ms = np.empty(steps)
+    los = np.empty(steps)
+    his = np.empty(steps)
+    cs = np.empty(steps)
     v1s = np.empty(steps)
+    frames = []
 
     for k in range(steps):
         t = k * dt
         u = a * np.sin(2 * np.pi * f * t)
-        m, _, _ = median_interval(u)
-        ts[k], xs[k], us[k], ms[k], v1s[k] = t, x, u, m, v1(x)
+        m, lo, hi = median_interval(u)
+        c = float(x.mean())
+        ts[k], xs[k], us[k] = t, x, u
+        ms[k], los[k], his[k], cs[k], v1s[k] = m, lo, hi, c, v1(x)
+
+        if k % stride == 0 or k == steps - 1:
+            frames.append(dict(t=t, nodes=nodes, edges=edges,
+                                x=dict(zip(nodes, x.tolist())), c=c, m=m, lo=lo, hi=hi))
+
         x = x + dt * protocol_rhs(x, u, adj, lam, alpha)
 
-    return dict(t=ts, x=xs, u=us, m=ms, v1=v1s, pi=pi_bound, graph=g)
+    return dict(t=ts, x=xs, u=us, m=ms, lo=los, hi=his, c=cs, v1=v1s,
+                pi=pi_bound, graph=g, frames=frames)
 
 
 def simulate_open(
@@ -56,6 +71,7 @@ def simulate_open(
     join_prob: float = 0.5,
     p_edge: float = 0.6,
     seed: int = 0,
+    n_frames: int = 120,
 ) -> dict:
     """Join/leave network, eq.(6): a joining agent starts at the mean of its neighbours."""
     rng = np.random.default_rng(seed)
@@ -68,23 +84,33 @@ def simulate_open(
     pi_bound = max(a[i] * 2 * np.pi * f[i] for i in g.nodes())
 
     steps = int(t_end / dt)
+    stride = max(1, steps // n_frames)
     next_event = dwell_tau
     log: list[tuple[float, str, int]] = []
-    hist_t, hist_x, hist_m, hist_v2 = [], [], [], []
+    hist_t, hist_x, hist_m, hist_c, hist_lo, hist_hi, hist_v2 = [], [], [], [], [], [], []
+    frames = []
 
     for k in range(steps):
         t = k * dt
         nodes = list(g.nodes())
+        edges = list(g.edges())
         adj = nx.to_numpy_array(g, nodelist=nodes)
         xv = np.array([x[i] for i in nodes])
         uv = np.array([a[i] * np.sin(2 * np.pi * f[i] * t) for i in nodes])
-        m, _, _ = median_interval(uv)
+        m, lo, hi = median_interval(uv)
         c = float(xv.mean())
 
         hist_t.append(t)
         hist_x.append(dict(zip(nodes, xv)))
         hist_m.append(m)
+        hist_c.append(c)
+        hist_lo.append(lo)
+        hist_hi.append(hi)
         hist_v2.append(abs(c - m))
+
+        if k % stride == 0 or k == steps - 1:
+            frames.append(dict(t=t, nodes=nodes, edges=edges,
+                                x=dict(zip(nodes, xv.tolist())), c=c, m=m, lo=lo, hi=hi))
 
         dxv = protocol_rhs(xv, uv, adj, lam, alpha)
         for i, dxi in zip(nodes, dxv):
@@ -113,6 +139,6 @@ def simulate_open(
                     log.append((t, "leave", leaving))
 
     return dict(
-        t=hist_t, x=hist_x, m=hist_m, v2=hist_v2, log=log,
-        pi=pi_bound, final_graph=g,
+        t=hist_t, x=hist_x, m=hist_m, c=hist_c, lo=hist_lo, hi=hist_hi, v2=hist_v2,
+        log=log, pi=pi_bound, final_graph=g, frames=frames,
     )

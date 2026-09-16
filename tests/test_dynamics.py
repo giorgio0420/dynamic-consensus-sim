@@ -6,7 +6,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from dynamic_consensus.dynamics import median_interval, protocol_rhs, v1
+from dynamic_consensus.dynamics import closed_gain_report, median_interval, open_gain_report, protocol_rhs, v1
 from dynamic_consensus.simulate import simulate_closed, simulate_open
 
 
@@ -39,6 +39,20 @@ def test_closed_network_reaches_consensus():
     tail = res["x"][-200:]
     spread = tail.max(axis=1) - tail.min(axis=1)
     assert spread.max() < 0.05, f"agents did not agree, spread={spread.max()}"
+
+
+def test_closed_gain_report_flags_violation():
+    ok = closed_gain_report(lam=90.0, alpha=8.0, n=5, pi=0.5)
+    assert ok["thm41_ok"] and ok["thm42_ok"]
+    bad = closed_gain_report(lam=10.0, alpha=8.0, n=5, pi=0.5)  # alpha > 2*lam/n = 4
+    assert not bad["thm41_ok"] and not bad["thm42_ok"]
+
+
+def test_open_gain_report_flags_violation():
+    ok = open_gain_report(lam=120.0, alpha=6.0, n_max=10, pi=0.2, band_b=0.01, dwell_tau=0.05)
+    assert ok["thm41_ok"] and ok["thm43_gain_ok"] and ok["thm43_bound_ok"]
+    bad = open_gain_report(lam=120.0, alpha=6.0, n_max=10, pi=0.2, band_b=5.0, dwell_tau=0.05)
+    assert not bad["thm43_bound_ok"]
 
 
 def test_open_network_runs_and_bounds_error():
