@@ -1,4 +1,4 @@
-# dynamic-consensus-sim
+# median-consensus-multi-agent-system
 
 Simulator + interactive GUI for the non-smooth median-consensus protocol from:
 
