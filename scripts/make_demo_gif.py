@@ -1,4 +1,4 @@
-"""Render assets/demo.gif: an open network with several join/leave events.
+"""Render demo.gif: an open network with several join/leave events.
 Run from the repo root: python scripts/make_demo_gif.py
 """
 import sys
@@ -46,6 +46,6 @@ def draw(k: int) -> None:
 
 
 anim = animation.FuncAnimation(fig, draw, frames=len(frames), interval=120)
-out = Path(__file__).resolve().parent.parent / "assets" / "demo.gif"
+out = Path(__file__).resolve().parent.parent / "demo.gif"
 anim.save(out, writer="pillow", fps=10)
 print(f"saved {out} ({out.stat().st_size / 1024:.0f} KB, {len(frames)} frames)")
