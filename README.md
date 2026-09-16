@@ -87,7 +87,7 @@ which is what keeps the Lyapunov argument valid across join events (§ below).
 
 *Filippov solution* — replace the ODE with a differential inclusion:
 
-$$\dot x \in K(x) \triangleq \bigcap_{\delta>0}\ \bigcap_{\mu(N)=0} \overline{\text{co}}\{f(B(x,\delta)\setminus N,\ t)\}$$
+$$\dot x \in K(x) \triangleq \bigcap_{\delta>0}\ \bigcap_{\mu(N)=0} \overline{\text{co}}\lbrace f(B(x,\delta)\setminus N,\ t)\rbrace$$
 
 At a discontinuity the derivative becomes the convex hull of the one-sided limits
 (`K(0)=[-1,1]` for `sign`). The field of eq. 5 is measurable and uniformly bounded, so a
@@ -95,13 +95,13 @@ Filippov solution exists for every initial condition.
 
 *Clarke gradient* — same idea applied to a locally Lipschitz Lyapunov function `V`:
 
-$$\partial V(x) \triangleq \text{co}\Big\{\lim_{i\to\infty}\nabla V(x_i)\ \Big|\ x_i\to x,\ x_i\notin\Omega_V\cup N\Big\}$$
+$$\partial V(x) \triangleq \text{co}\Big\lbrace\lim_{i\to\infty}\nabla V(x_i)\ \Big|\ x_i\to x,\ x_i\notin\Omega_V\cup N\Big\rbrace$$
 
 For `V(x)=|x|`: `∂V(0)=[-1,1]`, the same object as `SIGN(0)`.
 
 *Set-valued Lie derivative* —
 
-$$\tilde{\mathcal L}V(x) \triangleq \{a\in\mathbb R\ |\ \exists v\in K(x):\ \zeta\cdot v = a\ \ \forall \zeta\in\partial V(x)\}$$
+$$\tilde{\mathcal L}V(x) \triangleq \lbrace a\in\mathbb R\ |\ \exists v\in K(x):\ \zeta\cdot v = a\ \ \forall \zeta\in\partial V(x)\rbrace$$
 
 *Theorem 2.5 (finite-time convergence).* If `V=0` on the consensus subspace, `V>0`
 elsewhere, and `dV/dt ≤ -ε < 0` a.e. off the subspace, then `V` (and `x`) reach it by
