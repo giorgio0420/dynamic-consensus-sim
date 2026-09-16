@@ -2,11 +2,13 @@
 import sys
 from pathlib import Path
 
+import networkx as nx
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dynamic_consensus.dynamics import closed_gain_report, median_interval, open_gain_report, protocol_rhs, v1
+from dynamic_consensus.graphs import attach_new_node
 from dynamic_consensus.simulate import simulate_closed, simulate_open
 
 
@@ -53,6 +55,23 @@ def test_open_gain_report_flags_violation():
     assert ok["thm41_ok"] and ok["thm43_gain_ok"] and ok["thm43_bound_ok"]
     bad = open_gain_report(lam=120.0, alpha=6.0, n_max=10, pi=0.2, band_b=5.0, dwell_tau=0.05)
     assert not bad["thm43_bound_ok"]
+
+
+def test_attach_new_node_can_have_more_than_one_neighbor():
+    # with p_edge=1 the join must connect to every existing node, not just one
+    rng = np.random.default_rng(0)
+    g = nx.path_graph(5)  # nodes 0-4
+    attach_new_node(g, 5, p_edge=1.0, rng=rng)
+    assert set(g.neighbors(5)) == {0, 1, 2, 3, 4}
+
+
+def test_attach_new_node_stays_connected_even_at_p_zero():
+    # p_edge=0 would draw no neighbours; must still force one edge (Ass. 3.5)
+    rng = np.random.default_rng(0)
+    g = nx.path_graph(5)
+    attach_new_node(g, 5, p_edge=0.0, rng=rng)
+    assert len(list(g.neighbors(5))) == 1
+    assert nx.is_connected(g)
 
 
 def test_open_network_runs_and_bounds_error():

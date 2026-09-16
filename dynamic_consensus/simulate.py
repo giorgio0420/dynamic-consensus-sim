@@ -4,7 +4,7 @@ import networkx as nx
 import numpy as np
 
 from .dynamics import median_interval, protocol_rhs, v1
-from .graphs import random_connected_graph
+from .graphs import attach_new_node, random_connected_graph
 
 
 def simulate_closed(
@@ -119,9 +119,7 @@ def simulate_open(
         if t >= next_event:
             next_event += dwell_tau
             if rng.random() < join_prob and len(nodes) < n_max:
-                neighbor = rng.choice(nodes)
-                g.add_node(next_id)
-                g.add_edge(next_id, neighbor)
+                attach_new_node(g, next_id, p_edge, rng)
                 neigh = list(g.neighbors(next_id))
                 x[next_id] = float(np.mean([x[j] for j in neigh]))
                 a[next_id] = float(rng.uniform(0, band_b))
