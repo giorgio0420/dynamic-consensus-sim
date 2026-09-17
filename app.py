@@ -3,12 +3,13 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-from dynamic_consensus.data_source import DEMO_CSV_PATH, make_reference_from_csv, pick_window, resample_to_grid
-from dynamic_consensus.dynamics import closed_gain_report, median_interval, open_gain_report
+from dynamic_consensus.data_source import DEMO_CSV_PATH, build_stepwise_reference, make_reference_from_csv
+from dynamic_consensus.dynamics import closed_gain_report, median_interval, open_gain_report, stepwise_gain_report
 from dynamic_consensus.simulate import simulate_closed, simulate_open
 from dynamic_consensus.viz import fixed_colors, fixed_layout, value_range
 
-MAX_REAL_DATA_STEPS = 150_000  # keeps the Euler loop under ~15s; raise dt for a longer window
+MAX_REAL_DATA_STEPS = 150_000  # keeps the Euler loop under ~15s
+TARGET_STEPS_PER_BLOCK = 2_000  # Euler steps to hold each data block's target before it jumps
 
 st.set_page_config(page_title="Dynamic Median Consensus", layout="wide")
 st.title("Dynamic Consensus on the Median Value — simulator")
@@ -63,19 +64,31 @@ def agents_chart(t, x, n_or_ids, m) -> go.Figure:
     return fig
 
 
-def reference_preview_chart(ref: dict, t_end: float) -> go.Figure:
-    """Show the raw signals and their median target over the auto-picked window,
-    before running anything — this is the "see it with your own eyes" view."""
-    t_prev = np.linspace(0.0, t_end, min(len(ref["t_data"]) * 3, 2000) or 2)
-    u_prev = resample_to_grid(ref["t_data"], ref["u_data"], t_prev)
-    m_prev = np.array([median_interval(row)[0] for row in u_prev])
+def reference_preview_chart(sw: dict, labels: list[str]) -> go.Figure:
+    """Step plot of the block-averaged targets, covering the whole file — this is
+    exactly what the simulation below chases (constant per block, jumping at each
+    dwell), so what you see here is what you get, not a smoothed approximation."""
+    block_t = np.arange(sw["n_blocks"]) * sw["dwell"]
+    m_blocks = np.array([median_interval(row)[0] for row in sw["blocks_u"]])
     fig = go.Figure()
-    for j, label in enumerate(ref["labels"]):
-        fig.add_trace(go.Scatter(x=t_prev, y=u_prev[:, j], name=label, line=dict(width=1)))
-    fig.add_trace(go.Scatter(x=t_prev, y=m_prev, name="median m(u)",
-                              line=dict(color="black", width=3, dash="dash")))
-    fig.update_layout(xaxis_title="t [s]", yaxis_title="value", height=350,
-                       title="Reference signals (data preview) — this is the target the agents must track")
+    for j, label in enumerate(labels):
+        fig.add_trace(go.Scatter(x=block_t, y=sw["blocks_u"][:, j], name=label,
+                                  line=dict(width=1, shape="hv")))
+    fig.add_trace(go.Scatter(x=block_t, y=m_blocks, name="median m(u)",
+                              line=dict(color="black", width=3, dash="dash", shape="hv")))
+    fig.update_layout(
+        xaxis_title="t [s] (simulated)", yaxis_title="value", height=350,
+        title=f"Reference signals — {sw['n_blocks']} blocks (whole file, row-averaged), "
+              f"held {sw['dwell']:.3g}s each",
+    )
+    return fig
+
+
+def error_chart(t, v2, bound_label: str | None = None, bound_value: float | None = None) -> go.Figure:
+    fig = go.Figure(go.Scatter(x=t, y=v2, name="|mean(x) - m(u)|"))
+    if bound_value is not None:
+        fig.add_hline(y=bound_value, line=dict(color="red", dash="dot"), annotation_text=bound_label)
+    fig.update_layout(xaxis_title="t [s]", yaxis_title="tracking error", height=250)
     return fig
 
 
@@ -185,8 +198,7 @@ if scenario == "Closed network":
 
         if ref is not None:
             n = ref["n"]
-            t_end = pick_window(ref["t_data"], dt, MAX_REAL_DATA_STEPS)
-            n_rows_used = int(np.searchsorted(ref["t_data"] - ref["t_data"][0], t_end)) + 1
+            sw = build_stepwise_reference(ref["t_data"], ref["u_data"], dt, MAX_REAL_DATA_STEPS, TARGET_STEPS_PER_BLOCK)
             if signal_source == "PM2.5 dataset (demo)":
                 st.sidebar.caption(
                     f"{n} sensors: {', '.join(ref['labels'])} — PM2.5, Texas, Sep–Oct 2021, 2-min samples. "
@@ -194,43 +206,47 @@ if scenario == "Closed network":
                 )
             else:
                 st.sidebar.caption(f"{n} signals: {', '.join(ref['labels'])}")
-            st.sidebar.caption(f"window auto-picked: {t_end:.3g}s, using ~{n_rows_used} of "
-                                f"{len(ref['t_data'])} rows (raise dt for a longer window).")
-            if n_rows_used < 5 and len(ref["t_data"]) > 5:
-                st.sidebar.warning("Window covers very few rows — this dataset updates slower than the "
-                                    "protocol's default λ/α allow at this dt. Try a smaller λ and α "
-                                    "(e.g. λ~2-10, α~0.5-3) to afford a coarser, still-stable dt and see "
-                                    "more of the data move.")
+            st.sidebar.caption(f"whole file split into {sw['n_blocks']} blocks (row-averaged), each held "
+                                f"{sw['dwell']:.3g}s — {len(ref['t_data'])} rows total, no row skipped.")
         elif load_error:
             st.sidebar.error(f"Couldn't read that CSV: {load_error}")
         elif signal_source == "Upload your own CSV":
             st.sidebar.info("Upload a CSV to continue.")
 
     if real_data and ref is not None:
-        st.plotly_chart(reference_preview_chart(ref, t_end), use_container_width=True)
+        st.plotly_chart(reference_preview_chart(sw, ref["labels"]), use_container_width=True)
 
     if (not real_data or ref is not None) and st.sidebar.button("Run simulation", type="primary"):
         with st.spinner("integrating..."):
             if not real_data:
                 res = simulate_closed(n=n, lam=lam, alpha=alpha, t_end=t_end, dt=dt, seed=seed)
             else:
-                steps = int(t_end / dt)
-                t_grid = np.arange(steps) * dt
-                u_array = resample_to_grid(ref["t_data"], ref["u_data"], t_grid)
-                res = simulate_closed(n=n, lam=lam, alpha=alpha, t_end=t_end, dt=dt, seed=seed,
-                                       u_array=u_array, pi_bound=ref["pi_bound"], x0=u_array[0])
+                res = simulate_closed(n=n, lam=lam, alpha=alpha, t_end=sw["t_end"], dt=dt, seed=seed,
+                                       u_array=sw["u_array"], pi_bound=0.0, x0=sw["u_array"][0])
+                res["stepwise"] = sw
         st.session_state["res"] = res
+        st.session_state["res_n"] = n
         st.session_state["kind"] = "closed"
         st.session_state["closed_frame_idx"] = 0
 
-    if st.session_state.get("kind") == "closed":
+    if st.session_state.get("kind") == "closed" and st.session_state.get("res_n") == n:
         res = st.session_state["res"]
-        rep = closed_gain_report(lam, alpha, n, res["pi"])
+        is_stepwise = "stepwise" in res
 
-        gain_alert(rep["thm41_ok"], "Thm 4.1 (consensus)",
-                   f"need 0 < α < 2λ/n = {rep['upper']:.3g}, got α={alpha:.3g}, μ2={rep['mu2']:.3g}")
-        gain_alert(rep["thm42_ok"], "Thm 4.2 (median tracking)",
-                   f"need n·Π={rep['lower']:.3g} < α < 2λ/n={rep['upper']:.3g}, got α={alpha:.3g}, Π={res['pi']:.3g}")
+        if is_stepwise:
+            sw = res["stepwise"]
+            rep = stepwise_gain_report(lam, alpha, n, sw["b_jump"], sw["dwell"])
+            gain_alert(rep["thm41_ok"], "Thm 4.1 (consensus)",
+                       f"need 0 < α < 2λ/n = {rep['upper']:.3g}, got α={alpha:.3g}, μ2={rep['mu2']:.3g}")
+            gain_alert(rep["bound_ok"], "Sec. 10 bound (data-jump tracking)",
+                       f"need max block-to-block jump ≤ (α/n)·dwell = {rep['margin'] * sw['dwell']:.3g}, "
+                       f"got {sw['b_jump']:.3g} (net decrement D={rep['net_decrement']:.3g} per block)")
+        else:
+            rep = closed_gain_report(lam, alpha, n, res["pi"])
+            gain_alert(rep["thm41_ok"], "Thm 4.1 (consensus)",
+                       f"need 0 < α < 2λ/n = {rep['upper']:.3g}, got α={alpha:.3g}, μ2={rep['mu2']:.3g}")
+            gain_alert(rep["thm42_ok"], "Thm 4.2 (median tracking)",
+                       f"need n·Π={rep['lower']:.3g} < α < 2λ/n={rep['upper']:.3g}, got α={alpha:.3g}, Π={res['pi']:.3g}")
         euler_stability_check(res["graph"], lam, dt)
 
         spread0 = float(res["x"][0].max() - res["x"][0].min())
@@ -244,17 +260,26 @@ if scenario == "Closed network":
         col1, col2, col3 = st.columns(3)
         col1.metric("Thm 4.1 bound T1", f"{(spread0 / rep['mu2']):.4g} s" if rep["mu2"] > 0 else "n/a")
         col2.metric("μ2", f"{rep['mu2']:.3g}")
-        col3.metric("Π (ref. speed)", f"{res['pi']:.3g}")
+        if is_stepwise:
+            col3.metric("max block jump", f"{res['stepwise']['b_jump']:.3g}")
+        else:
+            col3.metric("Π (ref. speed)", f"{res['pi']:.3g}")
 
         st.subheader("Consensus value vs. target median")
         st.plotly_chart(consensus_vs_median_chart(res["t"], res["c"], res["m"], res["lo"], res["hi"]),
                          use_container_width=True)
+
+        st.subheader("Tracking error over time")
+        bound_val = rep["margin"] * res["stepwise"]["dwell"] if is_stepwise else None
+        st.plotly_chart(error_chart(res["t"], res["v2"], "(α/n)·dwell", bound_val), use_container_width=True)
 
         v1_fig = go.Figure(go.Scatter(x=res["t"], y=res["v1"], name="V1"))
         v1_fig.update_layout(xaxis_title="t [s]", yaxis_title="V1(x)", height=250)
         st.plotly_chart(v1_fig, use_container_width=True)
 
         network_explorer(res["frames"], key="closed")
+    elif st.session_state.get("kind") == "closed":
+        st.info("Reference signals or agent count changed since the last run — press Run simulation again.")
     else:
         st.info("Set parameters in the sidebar and press Run simulation.")
 
@@ -308,10 +333,7 @@ else:
         st.plotly_chart(consensus_vs_median_chart(res["t"], res["c"], res["m"], res["lo"], res["hi"]),
                          use_container_width=True)
 
-        v2_fig = go.Figure(go.Scatter(x=res["t"], y=res["v2"], name="|mean(x) - m(u)|"))
-        v2_fig.add_hline(y=band_b, line=dict(color="red", dash="dot"), annotation_text="B bound")
-        v2_fig.update_layout(xaxis_title="t [s]", yaxis_title="tracking error", height=250)
-        st.plotly_chart(v2_fig, use_container_width=True)
+        st.plotly_chart(error_chart(res["t"], res["v2"], "B bound", band_b), use_container_width=True)
 
         network_explorer(res["frames"], key="open")
     else:

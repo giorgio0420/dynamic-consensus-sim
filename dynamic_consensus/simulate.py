@@ -63,6 +63,7 @@ def simulate_closed(
     his = np.empty(steps)
     cs = np.empty(steps)
     v1s = np.empty(steps)
+    v2s = np.empty(steps)
     frames = []
 
     for k in range(steps):
@@ -72,6 +73,7 @@ def simulate_closed(
         c = float(x.mean())
         ts[k], xs[k], us[k] = t, x, u
         ms[k], los[k], his[k], cs[k], v1s[k] = m, lo, hi, c, v1(x)
+        v2s[k] = abs(c - m)
 
         if k % stride == 0 or k == steps - 1:
             frames.append(dict(t=t, nodes=nodes, edges=edges,
@@ -79,7 +81,7 @@ def simulate_closed(
 
         x = x + dt * protocol_rhs(x, u, adj, lam, alpha)
 
-    return dict(t=ts, x=xs, u=us, m=ms, lo=los, hi=his, c=cs, v1=v1s,
+    return dict(t=ts, x=xs, u=us, m=ms, lo=los, hi=his, c=cs, v1=v1s, v2=v2s,
                 pi=pi_bound, graph=g, frames=frames)
 
 

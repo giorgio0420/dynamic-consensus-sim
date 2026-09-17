@@ -66,32 +66,39 @@ sinusoids — pick it in the sidebar under "Reference signals":
   assumed beyond that (`dynamic_consensus/data_source.py`), so a differently-shaped
   dataset just works.
 
-In real-data mode `n` is set to the number of signal columns automatically, `u_i(t)` is
-linear interpolation between samples, `Π` (Ass. 3.2's bound on `|u̇_i|`) is the largest
-observed rate of change in the data, and the only controls left are `λ`, `α`, `dt` and
-`seed` — no agent count, no window start/length. The simulated time window is picked
-automatically from the data itself (`pick_window`, in `data_source.py`): enough rows to
-see the reference actually move, capped by how many Euler steps are affordable at the
-chosen `dt`. A "data preview" chart shows the raw signals and their median target before
-you even press Run.
+In real-data mode `n` is set to the number of signal columns automatically, and the only
+controls left are `λ`, `α`, `dt` and `seed` — no agent count, no window start/length.
+
+**The reference is piecewise-constant, not interpolated — this is the key design choice.**
+Interpolating between raw samples and integrating at a `dt` fine enough for a fast protocol
+(`λ` in the 50–200 range) means hundreds of thousands of Euler steps for even a short
+real-time window — too slow for a pure-Python loop, and it forced an awkward choice between
+a tiny window or an impractically small `λ`. Instead, `build_stepwise_reference`
+(`data_source.py`) splits the **entire file** into blocks — row-averaged, so every row
+contributes regardless of file length — sized so the whole run fits the step budget
+(`MAX_REAL_DATA_STEPS`, ~15s of computation). Each block is held as a *constant* target for
+a fixed dwell, then jumps to the next block's average; agents keep converging/tracking
+continuously across the jumps, never resetting. A step-plot preview shows exactly this
+sequence (not a smoothed curve) before you press Run.
+
+This maps onto the paper's own Sec. 10 argument for network events, not the continuous-`Π`
+Thm 4.2: the target is exactly constant *within* a block (no drift to fight, so no lower
+bound on `α` from `Π`), and the only thing that can hurt tracking is the jump between
+consecutive block medians (`b_jump`, analogous to Thm 4.3's `B`). The sidebar alert checks
+`b_jump ≤ (α/n)·dwell` — `stepwise_gain_report` in `dynamics.py` — and there's no `n_max`
+or dwell-time assumption to satisfy, since a fixed dataset has no join/leave events.
 
 Two things worth knowing before trusting the plots:
 
-- **One real sensor glitch dominates Π.** The strict worst-case slope in the bundled CSV
-  is a single ~190 µg/m³ jump in 2 minutes (a Houston sensor spike) — `Π≈1.58`/s versus a
-  typical `Π≈0.005–0.02`/s elsewhere. Gains sized to survive that one spike (Thm 4.2 needs
-  `α > n·Π`) look aggressive for what is otherwise a slow-moving signal. It's a live example
-  of the paper's own soft spot noted below: a single outlier forces gains sized for the
-  worst instant, everywhere, for all time.
-- **Explicit Euler needs `dt ≲ 1/(λ·max degree)`, independent of the gain conditions.** A
-  window fine-grained enough to resolve a fast protocol (`λ` in the 50–200 range) over many
-  minutes of real time means hundreds of thousands of steps — too slow for a pure-Python
-  loop, so the window is capped (`MAX_REAL_DATA_STEPS` in `app.py`) and a separate warning
-  fires if `dt` is too coarse for the chosen `λ` (persistent spurious spread even though the
-  gain conditions are satisfied — a numerical artifact, not a theorem failure). A dataset
-  that updates slowly (like 2-minute PM2.5 samples) pairs better with a smaller `λ`/`α`
-  (e.g. 2–10 / 0.5–3) and a coarser `dt`, which the sidebar suggests when the auto-picked
-  window covers only a handful of rows.
+- **A handful of real sensor spikes dominate the block jumps.** PM2.5 readings swing by
+  double digits in Texas air-quality events; averaging into ~75 blocks smooths out
+  single-sample glitches (like the raw ~190 µg/m³ 2-minute jump in the Houston sensor) but
+  not the underlying real spikes, so `b_jump` still comes out large enough to violate the
+  default gains. It's a live example of the paper's own soft spot noted below: a handful of
+  outliers force gains sized for the worst jump, everywhere, for all time.
+- **Explicit Euler still needs `dt ≲ 1/(λ·max degree)`, independent of the gain
+  conditions** — the same numerical-stability warning fires here as everywhere else in the
+  app; a coarser `dt` needs a smaller `λ` to stay accurate.
 
 ## Math reference
 

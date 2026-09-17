@@ -53,3 +53,18 @@ def open_gain_report(lam: float, alpha: float, n_max: int, pi: float, band_b: fl
     net_decrement = margin * dwell_tau - band_b
     return dict(upper=upper, lower=lower, mu2=mu2, margin=margin, net_decrement=net_decrement,
                 thm41_ok=mu2 > 0, thm43_gain_ok=lower < alpha < upper, thm43_bound_ok=net_decrement > 0)
+
+
+def stepwise_gain_report(lam: float, alpha: float, n: int, b_jump: float, dwell: float) -> dict:
+    """Same closed-network Sec. 10 argument as open_gain_report, specialized to a
+    piecewise-constant reference on a *fixed* network: no join/leave, so no n_max and
+    no continuous drift Pi -- the target is exactly constant between updates, so the
+    only "event" is the jump between consecutive block medians. Net decrement per
+    dwell period: D = (alpha/n)*dwell - b_jump.
+    """
+    upper = 2 * lam / n
+    mu2 = 2 * (upper - alpha)
+    margin = alpha / n
+    net_decrement = margin * dwell - b_jump
+    return dict(upper=upper, mu2=mu2, margin=margin, net_decrement=net_decrement,
+                thm41_ok=mu2 > 0, bound_ok=net_decrement > 0)

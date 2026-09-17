@@ -12,6 +12,8 @@ from pathlib import Path
 
 import numpy as np
 
+from .dynamics import median_interval
+
 DEMO_CSV_PATH = Path(__file__).resolve().parent.parent / "data" / "pm25_demo.csv"
 
 
@@ -93,16 +95,28 @@ def resample_to_grid(t_data: np.ndarray, u_data: np.ndarray, t_grid: np.ndarray)
     return np.column_stack([np.interp(t_grid, t_data, u_data[:, j]) for j in range(u_data.shape[1])])
 
 
-def pick_window(t_data: np.ndarray, dt: float, max_steps: int, target_samples: int = 60) -> float:
-    """Automatically size the simulated window from the data itself: no user-chosen
-    start/length. Aim to cover `target_samples` raw rows (enough to see the reference
-    actually move), capped by how many Euler steps are affordable at this dt.
+def build_stepwise_reference(
+    t_data: np.ndarray, u_data: np.ndarray, dt: float, max_steps: int, steps_per_block: int = 600,
+) -> dict:
+    """Downsample the *whole* file into blocks (row-averaged, every row contributes to
+    some block regardless of file length) small enough to simulate end to end within
+    the step budget. Each block is held as a constant target for `steps_per_block`
+    Euler steps, then the reference jumps to the next block's average — no
+    interpolation, no user-chosen start/length window.
+
+    This models the data the way Thm 4.3 (Sec. 10) models network events: a target
+    that is exactly constant between updates and jumps by at most `b_jump` at each
+    one, `steps_per_block*dt` seconds apart — see dynamics.stepwise_gain_report for
+    the matching gain condition (no Pi term, since there's no drift *within* a block).
     """
-    if len(t_data) < 2:
-        return dt
-    span = float(t_data[-1] - t_data[0])
-    if span <= 0:
-        return dt
-    native_dt = float(np.median(np.diff(t_data)))
-    desired = min(span, target_samples * native_dt)
-    return max(dt, min(desired, max_steps * dt))
+    n_rows = len(t_data)
+    n_blocks = max(1, min(n_rows, max_steps // max(1, steps_per_block)))
+    idx_splits = np.array_split(np.arange(n_rows), n_blocks)
+    blocks_u = np.array([u_data[idx].mean(axis=0) for idx in idx_splits])
+    medians = np.array([median_interval(row)[0] for row in blocks_u])
+    b_jump = float(np.max(np.abs(np.diff(medians)))) if n_blocks > 1 else 0.0
+    u_array = np.repeat(blocks_u, steps_per_block, axis=0)
+    return dict(
+        blocks_u=blocks_u, n_blocks=n_blocks, steps_per_block=steps_per_block,
+        b_jump=b_jump, u_array=u_array, dwell=steps_per_block * dt, t_end=u_array.shape[0] * dt,
+    )

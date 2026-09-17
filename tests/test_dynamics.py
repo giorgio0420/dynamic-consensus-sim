@@ -7,8 +7,10 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from dynamic_consensus.data_source import load_csv_signals, make_reference_from_csv, pick_window, resample_to_grid
-from dynamic_consensus.dynamics import closed_gain_report, median_interval, open_gain_report, protocol_rhs, v1
+from dynamic_consensus.data_source import build_stepwise_reference, load_csv_signals, make_reference_from_csv, resample_to_grid
+from dynamic_consensus.dynamics import (
+    closed_gain_report, median_interval, open_gain_report, protocol_rhs, stepwise_gain_report, v1,
+)
 from dynamic_consensus.graphs import attach_new_node
 from dynamic_consensus.simulate import simulate_closed, simulate_open
 
@@ -107,15 +109,31 @@ def test_load_csv_signals_rejects_bad_signal_column():
         assert "signal column" in str(exc)
 
 
-def test_pick_window_caps_by_step_budget_and_covers_target_samples():
-    t_data = np.arange(0, 1000, 10.0)  # 100 rows, 10s apart, 990s span
-    # plenty of budget: should cover ~60 native samples = 600s
-    assert np.isclose(pick_window(t_data, dt=0.01, max_steps=1_000_000, target_samples=60), 600.0)
-    # tight budget: capped by max_steps*dt regardless of target_samples
-    assert np.isclose(pick_window(t_data, dt=0.01, max_steps=100, target_samples=60), 1.0)
-    # short file: never exceeds the actual span
-    short = np.arange(0, 30, 10.0)
-    assert np.isclose(pick_window(short, dt=0.01, max_steps=1_000_000, target_samples=60), 20.0)
+def test_build_stepwise_reference_covers_every_row_via_averaging():
+    # 1000 rows, budget only allows 100 blocks (steps_per_block=10, max_steps=1000)
+    # -> every row still contributes, just averaged 10-to-a-block
+    t_data = np.arange(1000.0)
+    u_data = np.column_stack([np.arange(1000.0), np.arange(1000.0)[::-1]])
+    sw = build_stepwise_reference(t_data, u_data, dt=0.1, max_steps=1000, steps_per_block=10)
+    assert sw["n_blocks"] == 100
+    assert sw["u_array"].shape == (1000, 2)
+    assert np.isclose(sw["blocks_u"][0, 0], 4.5)  # mean of rows 0..9
+    assert np.isclose(sw["t_end"], 100.0)  # 1000 steps * dt=0.1
+
+
+def test_build_stepwise_reference_one_block_per_row_when_budget_allows():
+    t_data = np.arange(5.0)
+    u_data = np.arange(5.0).reshape(-1, 1)
+    sw = build_stepwise_reference(t_data, u_data, dt=0.1, max_steps=1_000_000, steps_per_block=10)
+    assert sw["n_blocks"] == 5
+    assert np.allclose(sw["blocks_u"].ravel(), [0, 1, 2, 3, 4])
+
+
+def test_stepwise_gain_report_flags_violation():
+    ok = stepwise_gain_report(lam=90.0, alpha=8.0, n=5, b_jump=1.0, dwell=1.0)
+    assert ok["thm41_ok"] and ok["bound_ok"]  # margin=8/5=1.6 > b_jump=1.0
+    bad = stepwise_gain_report(lam=90.0, alpha=8.0, n=5, b_jump=10.0, dwell=1.0)
+    assert not bad["bound_ok"]
 
 
 def test_make_reference_from_csv_interpolates_and_bounds_pi():
