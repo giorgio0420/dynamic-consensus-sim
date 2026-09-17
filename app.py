@@ -181,6 +181,10 @@ if scenario == "Closed network":
         t_end = st.sidebar.slider("sim time (s)", 0.01, 2.0, 0.3)
         dt = st.sidebar.select_slider("dt", options=DT_OPTIONS, value=1e-4)
     else:
+        topology = st.sidebar.radio("Network topology", ["Fully connected", "Random (Erdős–Rényi)"])
+        p_edge = 1.0 if topology == "Fully connected" else st.sidebar.slider(
+            "edge probability p", 0.1, 0.9, 0.5, help="Erdős–Rényi p — higher means denser/more connected"
+        )
         dt = st.sidebar.select_slider(
             "dt (s)", options=[1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1], value=1e-3
         )
@@ -222,7 +226,7 @@ if scenario == "Closed network":
                 res = simulate_closed(n=n, lam=lam, alpha=alpha, t_end=t_end, dt=dt, seed=seed)
             else:
                 res = simulate_closed(n=n, lam=lam, alpha=alpha, t_end=sw["t_end"], dt=dt, seed=seed,
-                                       u_array=sw["u_array"], pi_bound=0.0, x0=sw["u_array"][0])
+                                       u_array=sw["u_array"], pi_bound=0.0, x0=sw["u_array"][0], p_edge=p_edge)
                 res["stepwise"] = sw
         st.session_state["res"] = res
         st.session_state["res_n"] = n

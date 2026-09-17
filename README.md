@@ -67,7 +67,11 @@ sinusoids — pick it in the sidebar under "Reference signals":
   dataset just works.
 
 In real-data mode `n` is set to the number of signal columns automatically, and the only
-controls left are `λ`, `α`, `dt` and `seed` — no agent count, no window start/length.
+controls left are `λ`, `α`, `dt`, `seed`, and the **network topology** — "Fully connected"
+(every agent sees every other) or "Random (Erdős–Rényi)" with an adjustable edge
+probability `p`. The graph is otherwise chosen freely in the synthetic scenario
+(`p_edge=0.5` internally) — real-data mode surfaces the choice explicitly instead of
+picking one silently.
 
 **The reference is piecewise-constant, not interpolated — this is the key design choice.**
 Interpolating between raw samples and integrating at a `dt` fine enough for a fast protocol
