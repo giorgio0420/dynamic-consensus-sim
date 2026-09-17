@@ -1,10 +1,14 @@
 import networkx as nx
+import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
+from dynamic_consensus.data_source import DEMO_CSV_PATH, make_reference_from_csv, resample_to_grid
 from dynamic_consensus.dynamics import closed_gain_report, open_gain_report
 from dynamic_consensus.simulate import simulate_closed, simulate_open
 from dynamic_consensus.viz import fixed_colors, fixed_layout, value_range
+
+MAX_REAL_DATA_STEPS = 60_000  # keeps the Euler loop under ~5s; raise dt for a longer window
 
 st.set_page_config(page_title="Dynamic Median Consensus", layout="wide")
 st.title("Dynamic Consensus on the Median Value — simulator")
@@ -25,6 +29,23 @@ def gain_alert(ok: bool, label: str, detail: str) -> None:
                  f"violating it voids the guarantee (no bound applies), it does not by itself prove divergence. "
                  f"Watch the plots below: with the network's actual topology the trajectory may still settle, "
                  f"chatter without fully settling, or truly diverge.")
+
+
+def euler_stability_check(graph, lam: float, dt: float) -> None:
+    """Explicit Euler on this stiff sign()-based protocol needs dt well below
+    1/(lambda*max_degree), independently of whether the paper's gain conditions hold —
+    otherwise it shows persistent spurious chattering/spread that looks like a theorem
+    failure but is really just a too-coarse time step."""
+    degrees = [d for _, d in graph.degree()]
+    max_degree = max(degrees) if degrees else 0
+    if max_degree == 0:
+        return
+    dt_stable = 1.0 / (lam * max_degree)
+    if dt > 0.3 * dt_stable:
+        st.warning(f"⏱ dt={dt:.4g}s is large relative to the Euler stability guideline "
+                   f"dt ≲ {dt_stable:.4g}s (~1/(λ·max degree)). Even with satisfied gain conditions, "
+                   f"this can show persistent numerical chattering that looks like non-convergence — "
+                   f"lower dt or λ before trusting the plots below.")
 
 
 def agents_chart(t, x, n_or_ids, m) -> go.Figure:
@@ -118,13 +139,41 @@ alpha = st.sidebar.slider("α (fidelity gain)", 0.1, 50.0, 8.0)
 seed = st.sidebar.number_input("seed", 0, 10_000, 0)
 
 if scenario == "Closed network":
-    n = st.sidebar.slider("agents", 2, 20, 5)
-    t_end = st.sidebar.slider("sim time (s)", 0.01, 2.0, 0.3)
-    dt = st.sidebar.select_slider("dt", options=DT_OPTIONS, value=1e-4)
+    signal_source = st.sidebar.radio("Reference signals", ["Synthetic sinusoids", "PM2.5 dataset (real data)"])
+
+    real_data = signal_source != "Synthetic sinusoids"
+    if not real_data:
+        n = st.sidebar.slider("agents", 2, 20, 5)
+        t_end = st.sidebar.slider("sim time (s)", 0.01, 2.0, 0.3)
+        dt = st.sidebar.select_slider("dt", options=DT_OPTIONS, value=1e-4)
+        ref = None
+        t_start_s = 0.0
+    else:
+        ref = make_reference_from_csv(DEMO_CSV_PATH)
+        n = ref["n"]
+        st.sidebar.caption(f"{n} sensors: {', '.join(ref['labels'])} — PM2.5, Texas, "
+                            "Sep–Oct 2021, 2-min samples. github.com/giorgio0420/CNN-and-RNN-regression")
+        span_h = ref["t_span"][1] / 3600
+        t_start_h = st.sidebar.slider("window start (hours into dataset)", 0.0, span_h - 0.1, 0.0)
+        window_min = st.sidebar.slider("window length (minutes)", 2.0, 180.0, 20.0)
+        dt = st.sidebar.select_slider("dt (s)", options=[1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1], value=1e-3)
+        t_start_s = t_start_h * 3600.0
+        t_end = window_min * 60.0
+        if t_end / dt > MAX_REAL_DATA_STEPS:
+            t_end = MAX_REAL_DATA_STEPS * dt
+            st.sidebar.caption(f"⏱ window clamped to {t_end:.0f}s to stay responsive "
+                                f"(cap {MAX_REAL_DATA_STEPS:,} steps) — raise dt for a longer window.")
 
     if st.sidebar.button("Run simulation", type="primary"):
         with st.spinner("integrating..."):
-            res = simulate_closed(n=n, lam=lam, alpha=alpha, t_end=t_end, dt=dt, seed=seed)
+            if not real_data:
+                res = simulate_closed(n=n, lam=lam, alpha=alpha, t_end=t_end, dt=dt, seed=seed)
+            else:
+                steps = int(t_end / dt)
+                t_grid = t_start_s + np.arange(steps) * dt
+                u_array = resample_to_grid(ref["t_data"], ref["u_data"], t_grid)
+                res = simulate_closed(n=n, lam=lam, alpha=alpha, t_end=t_end, dt=dt, seed=seed,
+                                       u_array=u_array, pi_bound=ref["pi_bound"], x0=u_array[0])
         st.session_state["res"] = res
         st.session_state["kind"] = "closed"
         st.session_state["closed_frame_idx"] = 0
@@ -137,6 +186,7 @@ if scenario == "Closed network":
                    f"need 0 < α < 2λ/n = {rep['upper']:.3g}, got α={alpha:.3g}, μ2={rep['mu2']:.3g}")
         gain_alert(rep["thm42_ok"], "Thm 4.2 (median tracking)",
                    f"need n·Π={rep['lower']:.3g} < α < 2λ/n={rep['upper']:.3g}, got α={alpha:.3g}, Π={res['pi']:.3g}")
+        euler_stability_check(res["graph"], lam, dt)
 
         spread0 = float(res["x"][0].max() - res["x"][0].min())
         spread_end = float(res["x"][-200:].max(axis=1).max() - res["x"][-200:].min(axis=1).min())
@@ -193,6 +243,7 @@ else:
         gain_alert(rep["thm43_bound_ok"], "Thm 4.3 bound",
                    f"need B ≤ (α/n_max − Π)·Δτ = {rep['margin'] * dwell:.3g}, got B={band_b:.3g} "
                    f"(net decrement D={rep['net_decrement']:.3g} per period)")
+        euler_stability_check(res["final_graph"], lam, dt)
 
         tail_err = max(res["v2"][-200:])
         if not (rep["thm41_ok"] and rep["thm43_gain_ok"] and rep["thm43_bound_ok"]) and tail_err > 2 * band_b:

@@ -16,18 +16,42 @@ def simulate_closed(
     p_edge: float = 0.5,
     seed: int = 0,
     n_frames: int = 120,
+    u_func=None,
+    u_array: np.ndarray | None = None,
+    pi_bound: float | None = None,
+    x0: np.ndarray | None = None,
+    t_start: float = 0.0,
 ) -> dict:
-    """Fixed graph, Theorem 4.1/4.2 setting. References u_i(t) = a_i*sin(2*pi*f_i*t)."""
+    """Fixed graph, Theorem 4.1/4.2 setting.
+
+    By default references are synthetic u_i(t) = a_i*sin(2*pi*f_i*t). Pass u_func (and
+    the matching pi_bound, the Ass. 3.2 bound on |u_i_dot|) to drive the same protocol
+    with real data instead, e.g. dynamic_consensus.data_source.make_reference_from_csv.
+    t_start offsets which slice of u_func is played (elapsed sim time still runs 0..t_end).
+
+    u_func is called once per step, which is far too slow for long real-time windows
+    (hundreds of thousands of steps). Pass a precomputed u_array of shape
+    (int(t_end/dt), n) instead — see dynamic_consensus.data_source.resample_to_grid —
+    to index into it rather than call u_func every step; pi_bound is still required.
+    """
     rng = np.random.default_rng(seed)
     g = random_connected_graph(n, p_edge, rng)
     nodes = list(g.nodes())
     edges = list(g.edges())
     adj = nx.to_numpy_array(g, nodelist=nodes)
 
-    x = rng.uniform(0, 2, n)
-    a = rng.uniform(0, 2, n)
-    f = rng.uniform(0, 0.05, n)
-    pi_bound = float(np.max(a * 2 * np.pi * f))
+    if u_array is not None:
+        if pi_bound is None:
+            raise ValueError("pi_bound must be supplied together with u_array")
+    elif u_func is None:
+        a = rng.uniform(0, 2, n)
+        f = rng.uniform(0, 0.05, n)
+        pi_bound = float(np.max(a * 2 * np.pi * f))
+        u_func = lambda t: a * np.sin(2 * np.pi * f * t)
+    elif pi_bound is None:
+        raise ValueError("pi_bound must be supplied together with a custom u_func")
+
+    x = rng.uniform(0, 2, n) if x0 is None else np.asarray(x0, dtype=float).copy()
 
     steps = int(t_end / dt)
     stride = max(1, steps // n_frames)
@@ -43,7 +67,7 @@ def simulate_closed(
 
     for k in range(steps):
         t = k * dt
-        u = a * np.sin(2 * np.pi * f * t)
+        u = u_array[k] if u_array is not None else u_func(t_start + t)
         m, lo, hi = median_interval(u)
         c = float(x.mean())
         ts[k], xs[k], us[k] = t, x, u

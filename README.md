@@ -51,6 +51,31 @@ reference band `B`, run the simulation, and watch every agent's state converge (
 the median live, together with the theoretical bounds (`T1`, `B`) overlaid on the error
 curve.
 
+## Real-data references
+
+The closed-network scenario can also be driven by an actual dataset instead of synthetic
+sinusoids: `data/pm25_demo.csv` is the 6-sensor PM2.5 time series (McAllen, Midlothian,
+Midland, Houston, Austin, Del Rio — Texas, Sep–Oct 2021, one reading every 2 minutes) from
+[CNN-and-RNN-regression](https://github.com/giorgio0420/CNN-and-RNN-regression)'s LSTM
+notebook. Pick "PM2.5 dataset (real data)" in the sidebar: `n` is set to the number of
+signal columns automatically, `u_i(t)` is linear interpolation between samples, and `Π` is
+the largest observed rate of change in the data (`dynamic_consensus/data_source.py`).
+
+Two things worth knowing before trusting the plots:
+
+- **One real sensor glitch dominates Π.** The strict worst-case slope in this CSV is a
+  single ~190 µg/m³ jump in 2 minutes (a Houston sensor spike) — `Π≈1.58`/s versus a
+  typical `Π≈0.005–0.02`/s elsewhere. Gains sized to survive that one spike (Thm 4.2 needs
+  `α > n·Π`) look aggressive for what is otherwise a slow-moving signal. It's a live example
+  of the paper's own soft spot noted below: a single outlier forces gains sized for the
+  worst instant, everywhere, for all time.
+- **Explicit Euler needs `dt ≲ 1/(λ·max degree)`, independent of the gain conditions.** A
+  long real-time window (minutes) at a dt fine enough for `λ~90` means hundreds of thousands
+  of steps — too slow for a pure-Python loop, so the window is capped at 60,000 steps and a
+  separate warning fires if `dt` is too coarse for the chosen `λ` (this shows up as
+  persistent spurious spread even though the gain conditions are satisfied — a numerical
+  artifact, not a violation of the theorem).
+
 ## Math reference
 
 Notation: `x_i(t)` state, `u_i(t)` reference, `N_i(t)` neighbours, `n(t) ≤ n_max` agents,
@@ -139,9 +164,13 @@ condition above is exactly "net decrement per dwell period `D > 0`".
 
 ```
 dynamic_consensus/
-  dynamics.py   protocol RHS, median/interval, Lyapunov V1
-  graphs.py     random connected graph generator
-  simulate.py   closed-network and open-network integrators
-app.py          Streamlit GUI
-tests/          assert-based self-checks
+  dynamics.py     protocol RHS, median/interval, Lyapunov V1, gain reports
+  graphs.py       random connected graph generator, join-attachment rule
+  simulate.py     closed-network and open-network integrators
+  data_source.py  CSV -> reference signal (real-data mode)
+  viz.py          shared layout/color helpers (app + demo GIF)
+app.py            Streamlit GUI
+scripts/          demo GIF renderer
+data/             bundled PM2.5 dataset
+tests/            assert-based self-checks
 ```

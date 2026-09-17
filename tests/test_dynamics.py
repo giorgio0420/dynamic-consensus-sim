@@ -7,9 +7,17 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from dynamic_consensus.data_source import load_csv_signals, make_reference_from_csv, resample_to_grid
 from dynamic_consensus.dynamics import closed_gain_report, median_interval, open_gain_report, protocol_rhs, v1
 from dynamic_consensus.graphs import attach_new_node
 from dynamic_consensus.simulate import simulate_closed, simulate_open
+
+TINY_CSV = (
+    "created_at,a,b\n"
+    "2021-01-01 00:00:00+00:00,0.0,10.0\n"
+    "2021-01-01 00:00:10+00:00,1.0,8.0\n"
+    "2021-01-01 00:00:20+00:00,2.0,6.0\n"
+).encode()
 
 
 def test_median_odd():
@@ -72,6 +80,42 @@ def test_attach_new_node_stays_connected_even_at_p_zero():
     attach_new_node(g, 5, p_edge=0.0, rng=rng)
     assert len(list(g.neighbors(5))) == 1
     assert nx.is_connected(g)
+
+
+def test_load_csv_signals_sorts_and_parses():
+    t, u, labels = load_csv_signals(TINY_CSV)
+    assert labels == ["a", "b"]
+    assert np.allclose(t, [0.0, 10.0, 20.0])
+    assert np.allclose(u[:, 0], [0.0, 1.0, 2.0])
+    assert np.allclose(u[:, 1], [10.0, 8.0, 6.0])
+
+
+def test_make_reference_from_csv_interpolates_and_bounds_pi():
+    ref = make_reference_from_csv(TINY_CSV)
+    assert ref["n"] == 2
+    assert np.allclose(ref["u_func"](5.0), [0.5, 9.0])  # midpoint, linear interp
+    assert np.isclose(ref["pi_bound"], 0.2)  # |10-8|/10 = |8-6|/10 = 0.2 uV/s
+
+
+def test_resample_to_grid_matches_u_func():
+    ref = make_reference_from_csv(TINY_CSV)
+    t_grid = np.array([0.0, 2.5, 7.5, 20.0])
+    grid = resample_to_grid(ref["t_data"], ref["u_data"], t_grid)
+    expected = np.array([ref["u_func"](t) for t in t_grid])
+    assert np.allclose(grid, expected)
+
+
+def test_simulate_closed_with_precomputed_u_array_tracks_reference():
+    ref = make_reference_from_csv(TINY_CSV)
+    dt, t_end = 1e-3, 15.0
+    steps = int(t_end / dt)
+    t_grid = np.arange(steps) * dt
+    u_array = resample_to_grid(ref["t_data"], ref["u_data"], t_grid)
+    res = simulate_closed(n=2, lam=50.0, alpha=5.0, t_end=t_end, dt=dt, seed=0,
+                           u_array=u_array, pi_bound=ref["pi_bound"], x0=u_array[0])
+    # Thm 4.2 puts c(t) in the median *interval*, not on the point m(u) — with n=2 the
+    # interval spans both signals, so any point inside it (not just the midpoint) is valid.
+    assert res["lo"][-1] - 0.1 <= res["c"][-1] <= res["hi"][-1] + 0.1
 
 
 def test_open_network_runs_and_bounds_error():
