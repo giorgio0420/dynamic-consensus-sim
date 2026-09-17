@@ -3,12 +3,12 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
-from dynamic_consensus.data_source import DEMO_CSV_PATH, make_reference_from_csv, resample_to_grid
-from dynamic_consensus.dynamics import closed_gain_report, open_gain_report
+from dynamic_consensus.data_source import DEMO_CSV_PATH, make_reference_from_csv, pick_window, resample_to_grid
+from dynamic_consensus.dynamics import closed_gain_report, median_interval, open_gain_report
 from dynamic_consensus.simulate import simulate_closed, simulate_open
 from dynamic_consensus.viz import fixed_colors, fixed_layout, value_range
 
-MAX_REAL_DATA_STEPS = 60_000  # keeps the Euler loop under ~5s; raise dt for a longer window
+MAX_REAL_DATA_STEPS = 150_000  # keeps the Euler loop under ~15s; raise dt for a longer window
 
 st.set_page_config(page_title="Dynamic Median Consensus", layout="wide")
 st.title("Dynamic Consensus on the Median Value — simulator")
@@ -60,6 +60,22 @@ def agents_chart(t, x, n_or_ids, m) -> go.Figure:
             fig.add_trace(go.Scatter(x=t, y=x[:, i], name=f"x_{i}", line=dict(width=1)))
     fig.add_trace(go.Scatter(x=t, y=m, name="m(u)", line=dict(color="black", width=3, dash="dash")))
     fig.update_layout(xaxis_title="t [s]", yaxis_title="state", height=450)
+    return fig
+
+
+def reference_preview_chart(ref: dict, t_end: float) -> go.Figure:
+    """Show the raw signals and their median target over the auto-picked window,
+    before running anything — this is the "see it with your own eyes" view."""
+    t_prev = np.linspace(0.0, t_end, min(len(ref["t_data"]) * 3, 2000) or 2)
+    u_prev = resample_to_grid(ref["t_data"], ref["u_data"], t_prev)
+    m_prev = np.array([median_interval(row)[0] for row in u_prev])
+    fig = go.Figure()
+    for j, label in enumerate(ref["labels"]):
+        fig.add_trace(go.Scatter(x=t_prev, y=u_prev[:, j], name=label, line=dict(width=1)))
+    fig.add_trace(go.Scatter(x=t_prev, y=m_prev, name="median m(u)",
+                              line=dict(color="black", width=3, dash="dash")))
+    fig.update_layout(xaxis_title="t [s]", yaxis_title="value", height=350,
+                       title="Reference signals (data preview) — this is the target the agents must track")
     return fig
 
 
@@ -139,38 +155,67 @@ alpha = st.sidebar.slider("α (fidelity gain)", 0.1, 50.0, 8.0)
 seed = st.sidebar.number_input("seed", 0, 10_000, 0)
 
 if scenario == "Closed network":
-    signal_source = st.sidebar.radio("Reference signals", ["Synthetic sinusoids", "PM2.5 dataset (real data)"])
+    signal_source = st.sidebar.radio(
+        "Reference signals", ["Synthetic sinusoids", "PM2.5 dataset (demo)", "Upload your own CSV"]
+    )
 
     real_data = signal_source != "Synthetic sinusoids"
+    ref = None
+    load_error = None
+
     if not real_data:
         n = st.sidebar.slider("agents", 2, 20, 5)
         t_end = st.sidebar.slider("sim time (s)", 0.01, 2.0, 0.3)
         dt = st.sidebar.select_slider("dt", options=DT_OPTIONS, value=1e-4)
-        ref = None
-        t_start_s = 0.0
     else:
-        ref = make_reference_from_csv(DEMO_CSV_PATH)
-        n = ref["n"]
-        st.sidebar.caption(f"{n} sensors: {', '.join(ref['labels'])} — PM2.5, Texas, "
-                            "Sep–Oct 2021, 2-min samples. github.com/giorgio0420/CNN-and-RNN-regression")
-        span_h = ref["t_span"][1] / 3600
-        t_start_h = st.sidebar.slider("window start (hours into dataset)", 0.0, span_h - 0.1, 0.0)
-        window_min = st.sidebar.slider("window length (minutes)", 2.0, 180.0, 20.0)
-        dt = st.sidebar.select_slider("dt (s)", options=[1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1], value=1e-3)
-        t_start_s = t_start_h * 3600.0
-        t_end = window_min * 60.0
-        if t_end / dt > MAX_REAL_DATA_STEPS:
-            t_end = MAX_REAL_DATA_STEPS * dt
-            st.sidebar.caption(f"⏱ window clamped to {t_end:.0f}s to stay responsive "
-                                f"(cap {MAX_REAL_DATA_STEPS:,} steps) — raise dt for a longer window.")
+        dt = st.sidebar.select_slider(
+            "dt (s)", options=[1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1], value=1e-3
+        )
+        if signal_source == "PM2.5 dataset (demo)":
+            ref = make_reference_from_csv(DEMO_CSV_PATH)
+        else:
+            uploaded = st.sidebar.file_uploader(
+                "CSV: one timestamp column (first, ISO or numeric seconds) + one column per agent", type="csv"
+            )
+            if uploaded is not None:
+                try:
+                    ref = make_reference_from_csv(uploaded.getvalue())
+                except ValueError as exc:
+                    load_error = str(exc)
 
-    if st.sidebar.button("Run simulation", type="primary"):
+        if ref is not None:
+            n = ref["n"]
+            t_end = pick_window(ref["t_data"], dt, MAX_REAL_DATA_STEPS)
+            n_rows_used = int(np.searchsorted(ref["t_data"] - ref["t_data"][0], t_end)) + 1
+            if signal_source == "PM2.5 dataset (demo)":
+                st.sidebar.caption(
+                    f"{n} sensors: {', '.join(ref['labels'])} — PM2.5, Texas, Sep–Oct 2021, 2-min samples. "
+                    "github.com/giorgio0420/CNN-and-RNN-regression"
+                )
+            else:
+                st.sidebar.caption(f"{n} signals: {', '.join(ref['labels'])}")
+            st.sidebar.caption(f"window auto-picked: {t_end:.3g}s, using ~{n_rows_used} of "
+                                f"{len(ref['t_data'])} rows (raise dt for a longer window).")
+            if n_rows_used < 5 and len(ref["t_data"]) > 5:
+                st.sidebar.warning("Window covers very few rows — this dataset updates slower than the "
+                                    "protocol's default λ/α allow at this dt. Try a smaller λ and α "
+                                    "(e.g. λ~2-10, α~0.5-3) to afford a coarser, still-stable dt and see "
+                                    "more of the data move.")
+        elif load_error:
+            st.sidebar.error(f"Couldn't read that CSV: {load_error}")
+        elif signal_source == "Upload your own CSV":
+            st.sidebar.info("Upload a CSV to continue.")
+
+    if real_data and ref is not None:
+        st.plotly_chart(reference_preview_chart(ref, t_end), use_container_width=True)
+
+    if (not real_data or ref is not None) and st.sidebar.button("Run simulation", type="primary"):
         with st.spinner("integrating..."):
             if not real_data:
                 res = simulate_closed(n=n, lam=lam, alpha=alpha, t_end=t_end, dt=dt, seed=seed)
             else:
                 steps = int(t_end / dt)
-                t_grid = t_start_s + np.arange(steps) * dt
+                t_grid = np.arange(steps) * dt
                 u_array = resample_to_grid(ref["t_data"], ref["u_data"], t_grid)
                 res = simulate_closed(n=n, lam=lam, alpha=alpha, t_end=t_end, dt=dt, seed=seed,
                                        u_array=u_array, pi_bound=ref["pi_bound"], x0=u_array[0])

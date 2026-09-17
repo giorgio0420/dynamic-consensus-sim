@@ -53,28 +53,45 @@ curve.
 
 ## Real-data references
 
-The closed-network scenario can also be driven by an actual dataset instead of synthetic
-sinusoids: `data/pm25_demo.csv` is the 6-sensor PM2.5 time series (McAllen, Midlothian,
-Midland, Houston, Austin, Del Rio — Texas, Sep–Oct 2021, one reading every 2 minutes) from
-[CNN-and-RNN-regression](https://github.com/giorgio0420/CNN-and-RNN-regression)'s LSTM
-notebook. Pick "PM2.5 dataset (real data)" in the sidebar: `n` is set to the number of
-signal columns automatically, `u_i(t)` is linear interpolation between samples, and `Π` is
-the largest observed rate of change in the data (`dynamic_consensus/data_source.py`).
+The closed-network scenario can be driven by an actual dataset instead of synthetic
+sinusoids — pick it in the sidebar under "Reference signals":
+
+- **PM2.5 dataset (demo)** — `data/pm25_demo.csv`, the 6-sensor PM2.5 time series
+  (McAllen, Midlothian, Midland, Houston, Austin, Del Rio — Texas, Sep–Oct 2021, one
+  reading every 2 minutes) from
+  [CNN-and-RNN-regression](https://github.com/giorgio0420/CNN-and-RNN-regression)'s LSTM
+  notebook.
+- **Upload your own CSV** — any file with a timestamp column (first column; ISO
+  datetimes or plain numeric seconds both work) and one column per agent. No schema is
+  assumed beyond that (`dynamic_consensus/data_source.py`), so a differently-shaped
+  dataset just works.
+
+In real-data mode `n` is set to the number of signal columns automatically, `u_i(t)` is
+linear interpolation between samples, `Π` (Ass. 3.2's bound on `|u̇_i|`) is the largest
+observed rate of change in the data, and the only controls left are `λ`, `α`, `dt` and
+`seed` — no agent count, no window start/length. The simulated time window is picked
+automatically from the data itself (`pick_window`, in `data_source.py`): enough rows to
+see the reference actually move, capped by how many Euler steps are affordable at the
+chosen `dt`. A "data preview" chart shows the raw signals and their median target before
+you even press Run.
 
 Two things worth knowing before trusting the plots:
 
-- **One real sensor glitch dominates Π.** The strict worst-case slope in this CSV is a
-  single ~190 µg/m³ jump in 2 minutes (a Houston sensor spike) — `Π≈1.58`/s versus a
+- **One real sensor glitch dominates Π.** The strict worst-case slope in the bundled CSV
+  is a single ~190 µg/m³ jump in 2 minutes (a Houston sensor spike) — `Π≈1.58`/s versus a
   typical `Π≈0.005–0.02`/s elsewhere. Gains sized to survive that one spike (Thm 4.2 needs
   `α > n·Π`) look aggressive for what is otherwise a slow-moving signal. It's a live example
   of the paper's own soft spot noted below: a single outlier forces gains sized for the
   worst instant, everywhere, for all time.
 - **Explicit Euler needs `dt ≲ 1/(λ·max degree)`, independent of the gain conditions.** A
-  long real-time window (minutes) at a dt fine enough for `λ~90` means hundreds of thousands
-  of steps — too slow for a pure-Python loop, so the window is capped at 60,000 steps and a
-  separate warning fires if `dt` is too coarse for the chosen `λ` (this shows up as
-  persistent spurious spread even though the gain conditions are satisfied — a numerical
-  artifact, not a violation of the theorem).
+  window fine-grained enough to resolve a fast protocol (`λ` in the 50–200 range) over many
+  minutes of real time means hundreds of thousands of steps — too slow for a pure-Python
+  loop, so the window is capped (`MAX_REAL_DATA_STEPS` in `app.py`) and a separate warning
+  fires if `dt` is too coarse for the chosen `λ` (persistent spurious spread even though the
+  gain conditions are satisfied — a numerical artifact, not a theorem failure). A dataset
+  that updates slowly (like 2-minute PM2.5 samples) pairs better with a smaller `λ`/`α`
+  (e.g. 2–10 / 0.5–3) and a coarser `dt`, which the sidebar suggests when the auto-picked
+  window covers only a handful of rows.
 
 ## Math reference
 

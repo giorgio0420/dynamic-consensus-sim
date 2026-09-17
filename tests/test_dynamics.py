@@ -7,7 +7,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from dynamic_consensus.data_source import load_csv_signals, make_reference_from_csv, resample_to_grid
+from dynamic_consensus.data_source import load_csv_signals, make_reference_from_csv, pick_window, resample_to_grid
 from dynamic_consensus.dynamics import closed_gain_report, median_interval, open_gain_report, protocol_rhs, v1
 from dynamic_consensus.graphs import attach_new_node
 from dynamic_consensus.simulate import simulate_closed, simulate_open
@@ -88,6 +88,34 @@ def test_load_csv_signals_sorts_and_parses():
     assert np.allclose(t, [0.0, 10.0, 20.0])
     assert np.allclose(u[:, 0], [0.0, 1.0, 2.0])
     assert np.allclose(u[:, 1], [10.0, 8.0, 6.0])
+
+
+def test_load_csv_signals_auto_detects_first_column_as_time():
+    # no "created_at" here -- an arbitrary CSV should still work, time_col defaults to first
+    csv_bytes = b"ts,x,y\n0,1.0,2.0\n5,1.5,2.5\n10,2.0,3.0\n"
+    t, u, labels = load_csv_signals(csv_bytes)
+    assert labels == ["x", "y"]
+    assert np.allclose(t, [0.0, 5.0, 10.0])
+
+
+def test_load_csv_signals_rejects_bad_signal_column():
+    csv_bytes = b"ts,x\n0,1.0\n5,not_a_number\n"
+    try:
+        load_csv_signals(csv_bytes)
+        assert False, "expected ValueError"
+    except ValueError as exc:
+        assert "signal column" in str(exc)
+
+
+def test_pick_window_caps_by_step_budget_and_covers_target_samples():
+    t_data = np.arange(0, 1000, 10.0)  # 100 rows, 10s apart, 990s span
+    # plenty of budget: should cover ~60 native samples = 600s
+    assert np.isclose(pick_window(t_data, dt=0.01, max_steps=1_000_000, target_samples=60), 600.0)
+    # tight budget: capped by max_steps*dt regardless of target_samples
+    assert np.isclose(pick_window(t_data, dt=0.01, max_steps=100, target_samples=60), 1.0)
+    # short file: never exceeds the actual span
+    short = np.arange(0, 30, 10.0)
+    assert np.isclose(pick_window(short, dt=0.01, max_steps=1_000_000, target_samples=60), 20.0)
 
 
 def test_make_reference_from_csv_interpolates_and_bounds_pi():
